@@ -95,13 +95,19 @@ static void BM_FilterState_CEL(benchmark::State& state) {
   auto formatter = *Formatter::FormatterImpl::create(format, false);
 
   Formatter::Context formatter_context;
-  size_t output_bytes = 0;
+  size_t total_bytes_allocated = 0;
 
   for (auto _ : state) { // NOLINT
     std::string result = formatter->format(formatter_context, stream_info);
-    output_bytes += result.length();
+    // Count string allocation: capacity is usually result.size() rounded up to power of 2
+    // For small strings like "sleep-v1", this is typically 16-32 bytes
+    total_bytes_allocated += result.capacity();
+    benchmark::DoNotOptimize(result);
   }
-  benchmark::DoNotOptimize(output_bytes);
+
+  // Report memory allocated per iteration
+  state.SetBytesProcessed(total_bytes_allocated);
+  state.SetLabel("alloc_per_iter=" + std::to_string(total_bytes_allocated / state.iterations()) + "B");
 }
 BENCHMARK(BM_FilterState_CEL);
 
@@ -122,13 +128,16 @@ static void BM_FilterState_FIELD(benchmark::State& state) {
   auto formatter = *Formatter::FormatterImpl::create(format, false);
 
   Formatter::Context formatter_context;
-  size_t output_bytes = 0;
+  size_t total_bytes_allocated = 0;
 
   for (auto _ : state) { // NOLINT
     std::string result = formatter->format(formatter_context, stream_info);
-    output_bytes += result.length();
+    total_bytes_allocated += result.capacity();
+    benchmark::DoNotOptimize(result);
   }
-  benchmark::DoNotOptimize(output_bytes);
+
+  state.SetBytesProcessed(total_bytes_allocated);
+  state.SetLabel("alloc_per_iter=" + std::to_string(total_bytes_allocated / state.iterations()) + "B");
 }
 BENCHMARK(BM_FilterState_FIELD);
 
@@ -144,16 +153,20 @@ static void BM_FilterState_Direct(benchmark::State& state) {
 
   setupFieldFilterState(stream_info);
 
-  size_t output_bytes = 0;
+  size_t total_bytes_read = 0;
 
   for (auto _ : state) { // NOLINT
     const auto* obj = stream_info.filterState()->getDataReadOnly<Istio::Common::WorkloadMetadataObject>(
         std::string(Istio::Common::DownstreamPeerObj));
     if (obj) {
-      output_bytes += obj->workload_name_.length();
+      // Direct access doesn't allocate - just reads the string_view
+      total_bytes_read += obj->workload_name_.length();
     }
   }
-  benchmark::DoNotOptimize(output_bytes);
+
+  state.SetBytesProcessed(total_bytes_read);
+  state.SetLabel("alloc_per_iter=0B (no allocation, direct access)");
+  benchmark::DoNotOptimize(total_bytes_read);
 }
 BENCHMARK(BM_FilterState_Direct);
 
